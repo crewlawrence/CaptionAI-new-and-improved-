@@ -139,7 +139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/subscription', isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.id;
-      const user = await storage.getUser(userId);
+      let user = await storage.getUser(userId);
       
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -164,13 +164,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (stripeError) {
           console.error("Error checking subscription:", stripeError);
         }
+      } else if (user.stripeCustomerId) {
+        // Fallback: Check if customer has active subscription (webhook may not have fired yet)
+        try {
+          const stripe = await getUncachableStripeClient();
+          const subscriptions = await stripe.subscriptions.list({
+            customer: user.stripeCustomerId,
+            status: 'active',
+            limit: 1,
+          });
+
+          if (subscriptions.data.length > 0) {
+            const subscription = subscriptions.data[0];
+            await storage.updateUserStripeInfo(user.id, {
+              stripeSubscriptionId: subscription.id,
+              tier: 'pro',
+            });
+            return res.json({ tier: 'pro', status: subscription.status, subscription });
+          }
+        } catch (stripeError) {
+          console.error("Error checking customer subscriptions:", stripeError);
+        }
       }
 
+      // Refetch user in case we updated
+      user = await storage.getUser(userId);
+
       res.json({ 
-        tier: user.tier,
-        usageCount: user.captionUsageCount,
+        tier: user?.tier || 'free',
+        usageCount: user?.captionUsageCount || 0,
         usageLimit: FREE_TIER_LIMIT,
-        remainingFree: Math.max(0, FREE_TIER_LIMIT - user.captionUsageCount),
+        remainingFree: Math.max(0, FREE_TIER_LIMIT - (user?.captionUsageCount || 0)),
       });
     } catch (error) {
       console.error("Error getting subscription:", error);

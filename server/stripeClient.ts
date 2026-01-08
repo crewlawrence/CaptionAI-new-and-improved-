@@ -1,13 +1,14 @@
 import Stripe from 'stripe';
 
 let cachedCredentials: { publishableKey: string; secretKey: string } | null = null;
+let stripeClient: Stripe | null = null;
 
 async function getCredentials() {
   if (cachedCredentials) {
     return cachedCredentials;
   }
 
-  // Option 1: Use standard environment variables (portable deployment)
+  // Use standard environment variables (fully portable)
   if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PUBLISHABLE_KEY) {
     cachedCredentials = {
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
@@ -16,7 +17,7 @@ async function getCredentials() {
     return cachedCredentials;
   }
 
-  // Option 2: Use Replit Connectors (when running on Replit)
+  // Fallback: Try Replit Connectors if available (for Replit deployments)
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   if (hostname) {
     const xReplitToken = process.env.REPL_IDENTITY
@@ -60,40 +61,33 @@ async function getCredentials() {
   }
 
   throw new Error(
-    'Stripe credentials not found. Set STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY environment variables, ' +
-    'or configure the Stripe connector on Replit.'
+    'Stripe credentials not found. Set STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY environment variables.'
   );
 }
 
-export async function getUncachableStripeClient() {
+export async function getStripeClient(): Promise<Stripe> {
+  if (!stripeClient) {
+    const { secretKey } = await getCredentials();
+    stripeClient = new Stripe(secretKey);
+  }
+  return stripeClient;
+}
+
+export async function getUncachableStripeClient(): Promise<Stripe> {
   const { secretKey } = await getCredentials();
   return new Stripe(secretKey);
 }
 
-export async function getStripePublishableKey() {
+export async function getStripePublishableKey(): Promise<string> {
   const { publishableKey } = await getCredentials();
   return publishableKey;
 }
 
-export async function getStripeSecretKey() {
+export async function getStripeSecretKey(): Promise<string> {
   const { secretKey } = await getCredentials();
   return secretKey;
 }
 
-let stripeSync: any = null;
-
-export async function getStripeSync() {
-  if (!stripeSync) {
-    const { StripeSync } = await import('stripe-replit-sync');
-    const secretKey = await getStripeSecretKey();
-
-    stripeSync = new StripeSync({
-      poolConfig: {
-        connectionString: process.env.DATABASE_URL!,
-        max: 2,
-      },
-      stripeSecretKey: secretKey,
-    });
-  }
-  return stripeSync;
+export function getStripeWebhookSecret(): string | undefined {
+  return process.env.STRIPE_WEBHOOK_SECRET;
 }
